@@ -1,0 +1,35 @@
+# Rechka example configuration — copy to ~/.config/rechka/rechka.toml
+# (or run: rechka config init). All keys are optional.
+
+[model]
+# GigaAM v3 files live OUTSIDE the python package (~326 MB, downloaded once).
+dir = "~/.local/share/rechka/models/gigaam-v3"
+threads = 4
+
+[audio]
+device = "default"
+sample_rate = 16000
+backend = "auto"              # auto | sounddevice | pipewire | pulse | alsa
+
+[vad]
+enabled = true
+# model = "/path/to/silero_vad.onnx"   # default: next to the GigaAM files
+min_silence_seconds = 0.5
+file_enabled = true
+chunk_seconds = 30.0
+
+[text]
+dictionary_enabled = false
+dictionary_path = "~/.config/rechka/dictionary.txt"
+voice_suffix = false
+
+[im]
+framework = "auto"            # auto | ibus | fcitx5 | none
+
+[daemon]
+start_im_engine = true
+
+[download]
+repository = "dm1sh/rechka"   # GitHub release with the GigaAM files
+tag = "model-gigaam-v3"
+include_vad = true

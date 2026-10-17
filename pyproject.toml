@@ -1,0 +1,41 @@
+[project]
+name = "rechka-cli"
+version = "0.1.0"
+description = "Offline Russian speech recognition for Linux (GigaAM v3 + sherpa-onnx) with stdout/file/IM output"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "MIT" }
+dependencies = [
+    "numpy>=1.26",
+    "sherpa-onnx>=1.12",
+    # Native runtime (libonnxruntime etc.) — split out of the main wheel
+    # in recent sherpa-onnx releases; without it `import sherpa_onnx` fails.
+    "sherpa-onnx-core>=1.12",
+]
+
+[project.optional-dependencies]
+# PortAudio capture backend for `rechka start`/`toggle`. Without it, mic
+# capture falls back to pw-cat / parec / arecord subprocesses (mic.py).
+mic = ["sounddevice>=0.5"]
+# IBus engine bindings for the Python running rechka itself. Optional:
+# the daemon falls back to the distro python3 (python3-gobject /
+# python3-gi) for the engine when this extra is not installed.
+ibus = ["PyGObject>=3.42"]
+
+[project.scripts]
+rechka = "rechka.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/rechka"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
