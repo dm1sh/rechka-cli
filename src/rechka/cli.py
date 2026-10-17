@@ -227,7 +227,7 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument(
         "--exec-start",
         default=None,
-        help="ExecStart command (default: the rechka binary on PATH)",
+        help="ExecStart command (default: '<rechka binary on PATH> serve')",
     )
     return parser
 

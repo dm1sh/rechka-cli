@@ -34,10 +34,11 @@ WantedBy=default.target
 
 
 def default_exec_start() -> str:
+    """Default ExecStart: run the daemon (`rechka serve`) in foreground."""
     found = shutil.which("rechka")
     if found:
-        return found
-    return str(Path.home() / ".local" / "bin" / "rechka")
+        return f"{found} serve"
+    return f"{Path.home() / '.local' / 'bin' / 'rechka'} serve"
 
 
 def unit_path() -> Path:
