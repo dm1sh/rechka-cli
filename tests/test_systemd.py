@@ -15,4 +15,5 @@ def test_default_exec_start_falls_back_to_user_bin(monkeypatch):
 def test_unit_text_uses_given_exec_start_verbatim():
     text = systemd.unit_text("/opt/rechka serve --config /tmp/r.toml")
     assert "ExecStart=/opt/rechka serve --config /tmp/r.toml" in text
-    assert "[Install]" in text and "WantedBy=default.target" in text
+    assert "[Install]" in text and "WantedBy=graphical-session.target" in text
+    assert "After=graphical-session.target" in text

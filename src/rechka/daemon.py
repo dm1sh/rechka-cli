@@ -34,6 +34,7 @@ from .config import Config
 from .dictionary import Dictionary
 from .im import (
     FRAMEWORK_IBUS,
+    FRAMEWORK_NONE,
     EngineClient,
     EngineUnavailableError,
     IBusEngineSwitcher,
@@ -172,12 +173,42 @@ class Daemon:
             "pid": os.getpid(),
         }
 
+    def _ensure_im_engine(self) -> None:
+        """(Re)detect the IM framework and (re)start its engine.
+
+        Detection normally happens once at daemon startup — but under
+        systemd the daemon can start before GNOME/IBus, conclude "no
+        framework" and stay input-less until restarted. So on every
+        dictation start, re-check while no framework is known (config
+        permitting), and retry the engine start if it previously failed.
+        """
+        if (
+            self.cfg.im.framework == "auto"
+            and self.im_detection.framework == FRAMEWORK_NONE
+        ):
+            detection = detect_framework(self.cfg)
+            if detection.framework != FRAMEWORK_NONE:
+                self.im_detection = detection
+                self.im_status = None  # force the engine start below
+                if (
+                    detection.framework == FRAMEWORK_IBUS
+                    and self._ibus_switcher is None
+                ):
+                    self._ibus_switcher = IBusEngineSwitcher()
+        if (
+            self.cfg.daemon.start_im_engine
+            and self.im_detection.framework != FRAMEWORK_NONE
+            and (self.im_status is None or not self.im_status.started)
+        ):
+            self.im_status = start_engine(self.im_detection.framework, self.cfg)
+
     def _set_listening(self, want_listening: bool) -> dict[str, Any]:
         with self._lock:
             if want_listening:
                 if self.state == "listening":
                     return {"ok": True, "state": self.state}
                 try:
+                    self._ensure_im_engine()
                     self._ensure_pipeline()
                     self.mic.start()
                 except (MicrophoneError, TranscriberError) as exc:

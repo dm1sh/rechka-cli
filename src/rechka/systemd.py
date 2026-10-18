@@ -20,7 +20,7 @@ UNIT_NAME = "rechka.service"
 def unit_text(exec_start: str) -> str:
     return f"""[Unit]
 Description=Rechka offline speech recognition daemon
-After=graphical-session.target
+After=graphical-session.target org.freedesktop.IBus.session.GNOME.service
 
 [Service]
 Type=simple
@@ -29,7 +29,7 @@ Restart=on-failure
 RestartSec=3
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
 """
 
 

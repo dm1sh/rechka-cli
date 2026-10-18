@@ -132,3 +132,57 @@ def test_dictation_switches_ibus_input_and_restores_it(tmp_path):
     status = daemon.handle({"cmd": "status"})
     assert status["im_switch_active"] is False
     assert "switched input back" in status["im_switch_detail"]
+
+
+def test_start_redetects_framework_that_appeared_after_daemon_start(tmp_path, monkeypatch):
+    """Regression: under systemd the daemon may start before IBus and
+    conclude "no framework"; a later start must re-detect, not stay mute."""
+    import rechka.daemon as daemon_module
+    from rechka.im import Detection, EngineStatus
+
+    detections = iter([
+        Detection("none", "daemon started before the graphical session"),
+        Detection("ibus", "ibus-daemon appeared later"),
+    ])
+    monkeypatch.setattr(
+        daemon_module, "detect_framework", lambda cfg: next(detections)
+    )
+    monkeypatch.setattr(
+        daemon_module,
+        "start_engine",
+        lambda framework, cfg: EngineStatus(
+            framework, framework != "none", "fake engine"
+        ),
+    )
+
+    class FakeSwitcher:
+        active = False
+        previous = None
+
+        def activate(self):
+            return type("Result", (), {"detail": "fake switch"})()
+
+        def restore(self):
+            return type("Result", (), {"detail": "fake restore"})()
+
+    monkeypatch.setattr(daemon_module, "IBusEngineSwitcher", FakeSwitcher)
+
+    commits: list[str] = []
+    cfg = Config()
+    cfg.model.dir = tmp_path
+    cfg.daemon.start_im_engine = True  # framework stays "auto"
+    mic = FakeMic()
+    daemon = Daemon(
+        cfg,
+        mic=mic,
+        transcriber_factory=FakeTranscriber,
+        commit_fn=lambda text: commits.append(text) or {"ok": True, "committed": True},
+    )
+    mic.on_samples = daemon._on_samples
+
+    assert daemon.im_detection.framework == "none"
+    assert daemon.handle({"cmd": "start"}) == {"ok": True, "state": "listening"}
+    assert daemon.im_detection.framework == "ibus"
+    assert daemon.im_status.started is True
+    assert isinstance(daemon._ibus_switcher, FakeSwitcher)
+    daemon.handle({"cmd": "stop"})
