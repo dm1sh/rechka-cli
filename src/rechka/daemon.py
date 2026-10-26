@@ -157,7 +157,13 @@ class Daemon:
             "model_dir": str(self.cfg.model.dir),
             "model_loaded": self._transcriber is not None,
             "last_text": self.last_text,
-            "last_error": self.last_error,
+            "last_error": (
+                self.last_error
+                if self.last_error is not None
+                else getattr(self.mic, "last_error", None)
+            ),
+            "mic_chunks": getattr(self.mic, "chunks_received", None),
+            "mic_peak": round(getattr(self.mic, "peak_level", 0.0) or 0.0, 4),
             "segments_dictated": self.segments_dictated,
             "im_framework": self.im_detection.framework,
             "im_evidence": self.im_detection.evidence,

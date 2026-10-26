@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import threading
 from typing import Callable
 
@@ -77,6 +78,30 @@ def select_backend(cfg: Config) -> str:
     )
 
 
+_pw_cat_raw_supported: bool | None = None
+
+
+def pw_cat_supports_raw() -> bool:
+    """Whether `pw-cat --raw` exists (PipeWire >= 1.0-ish; 0.3.x lacks it).
+
+    Since PipeWire 1.4, `pw-cat --record ... -` (stdout) without --raw
+    writes a Sun/AU container (header + big-endian samples) instead of
+    raw PCM, which a raw-s16le reader hears as byte-swapped noise.
+    Probed once via --help so old PipeWire keeps working unchanged.
+    """
+    global _pw_cat_raw_supported
+    if _pw_cat_raw_supported is None:
+        try:
+            result = subprocess.run(
+                ["pw-cat", "--help"],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            _pw_cat_raw_supported = "--raw" in (result.stdout + result.stderr)
+        except Exception:
+            _pw_cat_raw_supported = False
+    return _pw_cat_raw_supported
+
+
 def _unavailable_detail(name: str) -> str:
     if name == "sounddevice":
         return (
@@ -134,6 +159,9 @@ class _SubprocessBackend:
         self._name = name
         self._process: subprocess.Popen | None = None
         self._thread: threading.Thread | None = None
+        self._stopping = False
+        # Set by MicrophoneCapture; called if the recorder dies on its own.
+        self.on_error: Callable[[str], None] | None = None
 
     def _command(self) -> list[str]:
         rate = str(self._cfg.audio.sample_rate)
@@ -141,6 +169,8 @@ class _SubprocessBackend:
         if self._name == "pipewire":
             cmd = ["pw-cat", "--record", "--rate", rate, "--channels", "1",
                    "--format", "s16", "-"]
+            if pw_cat_supports_raw():
+                cmd.insert(2, "--raw")  # raw PCM to stdout, no AU container
             if device and device != "default":
                 cmd += ["--target", device]
             return cmd
@@ -155,9 +185,11 @@ class _SubprocessBackend:
         return cmd
 
     def start(self, on_samples: OnSamples) -> None:
-        self._process = subprocess.Popen(
-            self._command(), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
-        )
+        self._stopping = False
+        # stderr is inherited on purpose: recorder errors (device gone,
+        # format rejected after a PipeWire upgrade, ...) must reach the
+        # daemon's stderr/journal instead of vanishing into DEVNULL.
+        self._process = subprocess.Popen(self._command(), stdout=subprocess.PIPE)
         self._thread = threading.Thread(
             target=self._pump, args=(on_samples,), daemon=True,
             name=f"rechka-mic-{self._name}",
@@ -177,8 +209,16 @@ class _SubprocessBackend:
             while pending.size >= WINDOW_SAMPLES:
                 on_samples(np.array(pending[:WINDOW_SAMPLES], copy=True))
                 pending = pending[WINDOW_SAMPLES:]
+        if not self._stopping and self.on_error is not None:
+            returncode = self._process.wait()
+            if returncode != 0:
+                self.on_error(
+                    f"microphone recorder ({self._name}) exited unexpectedly "
+                    f"with code {returncode}; its error output is above"
+                )
 
     def stop(self) -> None:
+        self._stopping = True
         if self._process is not None:
             self._process.terminate()
             try:
@@ -206,14 +246,37 @@ class MicrophoneCapture:
         self.listening = False
         self.backend_name: str | None = None
         self._backend = None
+        # Diagnostics: why capture died, and whether audio is arriving
+        # at all (chunks/peak distinguish "recorder dead" from "silence").
+        self.last_error: str | None = None
+        self.chunks_received = 0
+        self.peak_level = 0.0
+
+    def _deliver(self, chunk: np.ndarray) -> None:
+        self.chunks_received += 1
+        if chunk.size:
+            peak = float(np.max(np.abs(chunk)))
+            if peak > self.peak_level:
+                self.peak_level = peak
+        self._on_samples(chunk)
+
+    def _backend_failed(self, message: str) -> None:
+        self.last_error = message
+        self.listening = False
+        print(f"rechka: mic: {message}", file=sys.stderr, flush=True)
 
     def start(self) -> None:
         if self.listening:
             return
         name = select_backend(self._cfg)  # raises MicrophoneError
         backend = _make_backend(name, self._cfg)
+        self.last_error = None
+        self.chunks_received = 0
+        self.peak_level = 0.0
+        if hasattr(backend, "on_error"):
+            backend.on_error = self._backend_failed
         try:
-            backend.start(self._on_samples)
+            backend.start(self._deliver)
         except MicrophoneError:
             raise
         except Exception as exc:  # PortAudio errors, Popen failures, ...

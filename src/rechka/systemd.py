@@ -17,7 +17,20 @@ from . import paths
 UNIT_NAME = "rechka.service"
 
 
+def _ensure_serve(exec_start: str) -> str:
+    """Guarantee the unit starts the daemon, not the bare CLI.
+
+    A bare `rechka` exits with a usage error (status 2), so an ExecStart
+    missing the `serve` subcommand — e.g. passed via --exec-start — would
+    crash-loop under Restart=on-failure.
+    """
+    if "serve" in exec_start.split():
+        return exec_start
+    return f"{exec_start} serve"
+
+
 def unit_text(exec_start: str) -> str:
+    exec_start = _ensure_serve(exec_start)
     return f"""[Unit]
 Description=Rechka offline speech recognition daemon
 After=graphical-session.target org.freedesktop.IBus.session.GNOME.service

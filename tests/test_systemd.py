@@ -17,3 +17,8 @@ def test_unit_text_uses_given_exec_start_verbatim():
     assert "ExecStart=/opt/rechka serve --config /tmp/r.toml" in text
     assert "[Install]" in text and "WantedBy=graphical-session.target" in text
     assert "After=graphical-session.target" in text
+
+
+def test_unit_text_appends_serve_when_missing():
+    text = systemd.unit_text("/opt/rechka")
+    assert "ExecStart=/opt/rechka serve" in text

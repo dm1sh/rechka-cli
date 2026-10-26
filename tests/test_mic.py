@@ -103,4 +103,56 @@ def test_subprocess_backend_streams_windows(tmp_path, monkeypatch):
     received = np.concatenate(chunks)
     assert received.size == expected.size
     assert np.allclose(received, expected.astype(np.float32) / 32768.0, atol=1e-4)
+    assert capture.chunks_received == 3
+    assert capture.peak_level > 0.02  # seen audio, not silence
+    assert capture.last_error is None  # clean exit (code 0) is not a failure
     assert os.name  # silence linters; PATH restore is monkeypatch's job
+
+
+def test_subprocess_backend_failure_is_reported(tmp_path, monkeypatch):
+    """A recorder dying on its own must surface, not vanish silently."""
+    script = tmp_path / "arecord"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "print('fake arecord: device exploded', file=sys.stderr)\n"
+        "sys.exit(3)\n",
+        encoding="utf-8",
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    capture = MicrophoneCapture(_cfg("alsa"), lambda chunk: None)
+    capture.start()
+    deadline = time.monotonic() + 10
+    while capture.last_error is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+    capture.stop()
+    assert capture.last_error is not None and "code 3" in capture.last_error
+    assert not capture.listening
+    assert capture.chunks_received == 0
+
+
+def test_pipewire_command_uses_raw_when_supported(monkeypatch):
+    backend = mic._SubprocessBackend(_cfg("pipewire"), "pipewire")
+    monkeypatch.setattr(mic, "pw_cat_supports_raw", lambda: True)
+    assert "--raw" in backend._command()
+    monkeypatch.setattr(mic, "pw_cat_supports_raw", lambda: False)
+    assert "--raw" not in backend._command()
+
+
+def test_pw_cat_raw_probe_reads_help(monkeypatch):
+    class Result:
+        stdout = "usage: pw-cat [options]  -a, --raw  RAW mode"
+        stderr = ""
+
+    monkeypatch.setattr(mic, "_pw_cat_raw_supported", None)
+    monkeypatch.setattr(mic.subprocess, "run", lambda *a, **k: Result())
+    assert mic.pw_cat_supports_raw() is True
+
+    class OldResult:
+        stdout = "usage: pw-cat [options]  --record"
+        stderr = ""
+
+    monkeypatch.setattr(mic, "_pw_cat_raw_supported", None)
+    monkeypatch.setattr(mic.subprocess, "run", lambda *a, **k: OldResult())
+    assert mic.pw_cat_supports_raw() is False
